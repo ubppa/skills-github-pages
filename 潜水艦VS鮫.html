@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>潜水艦VSサメ</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      touch-action: none;
+      background-color: #0a3258;
+      font-family: Arial, sans-serif;
+    }
+    #gameCanvas {
+      display: block;
+      width: 100%;
+      height: 100vh;
+      background: linear-gradient(to bottom, #1a95d5 0%, #0a3258 70%, #072038 100%);
+    }
+    #startScreen, #gameOverScreen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background-color: rgba(10, 50, 88, 0.8);
+      color: white;
+      z-index: 100;
+    }
+    #gameOverScreen {
+      display: none;
+    }
+    button {
+      background-color: #ff6b00;
+      color: white;
+      border: none;
+      padding: 15px 32px;
+      text-align: center;
+      text-decoration: none;
+      font-size: 20px;
+      margin: 20px;
+      cursor: pointer;
+      border-radius: 10px;
+    }
+    #score, #hpDisplay {
+      position: absolute;
+      top: 10px;
+      color: white;
+      font-size: 24px;
+      z-index: 50;
+    }
+    #score { left: 10px; }
+    #hpDisplay { right: 10px; }
+    /* コントロールボタン群（上下左右＋発射） */
+    #controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: grid;
+      grid-template-columns: repeat(3, 60px);
+      grid-template-rows: repeat(2, 60px);
+      gap: 10px;
+      z-index: 50;
+    }
+    .control-btn {
+      width: 60px;
+      height: 60px;
+      background-color: rgba(255, 255, 255, 0.3);
+      border-radius: 10px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 24px;
+      color: white;
+      user-select: none;
+    }
+    /* 配置調整（真ん中に空白のセル） */
+    #upBtn { grid-column: 2; grid-row: 1; }
+    #leftBtn { grid-column: 1; grid-row: 2; }
+    #downBtn { grid-column: 2; grid-row: 2; }
+    #rightBtn { grid-column: 3; grid-row: 2; }
+    #fireBtn { grid-column: 3; grid-row: 1; }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  
+  <div id="score">スコア: 0</div>
+  <div id="hpDisplay">HP: 100</div>
+  
+  <div id="controls">
+    <div class="control-btn" id="upBtn">↑</div>
+    <div class="control-btn" id="fireBtn">🔥</div>
+    <div class="control-btn" id="leftBtn">←</div>
+    <div class="control-btn" id="downBtn">↓</div>
+    <div class="control-btn" id="rightBtn">→</div>
+  </div>
+  
+  <div id="startScreen">
+    <h1>潜水艦VSサメ</h1>
+    <p>操作方法: 矢印ボタンで潜水艦を移動し、🔥ボタンでミサイルを発射してサメを倒そう！</p>
+    <button id="startBtn">ゲーム開始</button>
+  </div>
+  
+  <div id="gameOverScreen">
+    <h1>ゲームオーバー</h1>
+    <h2 id="finalScore">スコア: 0</h2>
+    <button id="restartBtn">もう一度プレイ</button>
+  </div>
+  
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const startScreen = document.getElementById('startScreen');
+    const gameOverScreen = document.getElementById('gameOverScreen');
+    const scoreDisplay = document.getElementById('score');
+    const hpDisplay = document.getElementById('hpDisplay');
+    const finalScoreDisplay = document.getElementById('finalScore');
+    const startBtn = document.getElementById('startBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const upBtn = document.getElementById('upBtn');
+    const downBtn = document.getElementById('downBtn');
+    const leftBtn = document.getElementById('leftBtn');
+    const rightBtn = document.getElementById('rightBtn');
+    const fireBtn = document.getElementById('fireBtn');
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    
+    let gameRunning = false;
+    let score = 0;
+    let playerHP = 100;
+    
+    // プレイヤー（潜水艦）の設定（無敵フラグ・タイマー追加）
+    const submarine = {
+      x: 50,
+      y: canvas.height / 2,
+      width: 80,
+      height: 30,
+      speed: 5,
+      color: '#0077cc',
+      invincible: false,
+      invincibleUntil: 0,
+      move: function(direction) {
+        if (direction === 'up' && this.y > 30) {
+          this.y -= this.speed;
+        } else if (direction === 'down' && this.y < canvas.height - this.height) {
+          this.y += this.speed;
+        } else if (direction === 'left' && this.x > 0) {
+          this.x -= this.speed;
+        } else if (direction === 'right' && this.x < canvas.width - this.width) {
+          this.x += this.speed;
+        }
+      },
+      draw: function() {
+        // 無敵時のグロー表示
+        if (this.invincible) {
+          ctx.save();
+          ctx.strokeStyle = 'gold';
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          ctx.ellipse(this.x, this.y, this.width/2 + 10, this.height/2 + 10, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+        // 潜水艦本体
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y, this.width / 2, this.height / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        const gradient = ctx.createLinearGradient(
+          this.x - this.width / 2,
+          this.y - this.height / 2,
+          this.x + this.width / 2,
+          this.y + this.height / 2
+        );
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 0.7)');
+        gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0)');
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
+        
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y, this.width / 2, this.height / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 先端部分
+        ctx.fillStyle = '#004080';
+        ctx.beginPath();
+        ctx.moveTo(this.x + this.width / 2, this.y);
+        ctx.lineTo(this.x + this.width / 2 + 15, this.y);
+        ctx.lineTo(this.x + this.width / 2, this.y + this.height / 3);
+        ctx.fill();
+        
+        // 後部プロペラ
+        ctx.fillStyle = '#666666';
+        ctx.beginPath();
+        ctx.moveTo(this.x - this.width / 2, this.y - this.height / 3);
+        ctx.lineTo(this.x - this.width / 2 - 10, this.y - this.height / 2);
+        ctx.lineTo(this.x - this.width / 2 - 10, this.y + this.height / 2);
+        ctx.lineTo(this.x - this.width / 2, this.y + this.height / 3);
+        ctx.fill();
+        
+        // 潜望鏡
+        ctx.fillStyle = '#ff6600';
+        ctx.fillRect(this.x + 10, this.y - this.height / 2 - 15, 5, 15);
+        ctx.fillStyle = '#004080';
+        ctx.fillRect(this.x + 8, this.y - this.height / 2 - 20, 9, 5);
+        
+        // 窓
+        ctx.fillStyle = '#80dfff';
+        ctx.beginPath();
+        ctx.arc(this.x + 15, this.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#004080';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(this.x + 15, this.y, 5, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // 艦体のディテール
+        ctx.strokeStyle = '#004080';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(this.x - this.width / 3, this.y - this.height / 3);
+        ctx.lineTo(this.x + this.width / 3, this.y - this.height / 3);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(this.x - this.width / 3, this.y + this.height / 3);
+        ctx.lineTo(this.x + this.width / 3, this.y + this.height / 3);
+        ctx.stroke();
+      }
+    };
+    
+    let missiles = [];
+    const missileSpeed = 10;
+    function createMissile() {
+      missiles.push({
+        x: submarine.x + submarine.width / 2,
+        y: submarine.y,
+        width: 20,
+        height: 5,
+        speed: missileSpeed
+      });
+    }
+    
+    let sharks = [];
+    const sharkSpawnRate = 100;
+    let sharkSpeed = 2;
+    function createShark() {
+      const size = 20 + Math.random() * 30;
+      sharks.push({
+        x: canvas.width + size,
+        y: Math.random() * (canvas.height - size * 2) + size,
+        width: size * 2,
+        height: size,
+        speed: 1 + Math.random() * sharkSpeed,
+        hp: Math.ceil(size / 10)
+      });
+    }
+    
+    // 新機能：パワーアップ（無敵アイテム）
+    let powerUps = [];
+    function createPowerUp() {
+      const size = 20;
+      powerUps.push({
+        x: canvas.width + size,
+        y: Math.random() * (canvas.height - size * 2) + size,
+        width: size,
+        height: size,
+        speed: 2
+      });
+    }
+    
+    // 衝突判定（AABB方式）
+    function checkCollision(obj1, obj2) {
+      return obj1.x < obj2.x + obj2.width &&
+             obj1.x + obj1.width > obj2.x &&
+             obj1.y < obj2.y + obj2.height &&
+             obj1.y + obj1.height > obj2.y;
+    }
+    
+    // 泡の設定と描画
+    let bubbles = [];
+    function createBubbles() {
+      for (let i = 0; i < 50; i++) {
+        bubbles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          radius: Math.random() * 5 + 1,
+          speed: Math.random() * 2 + 0.5
+        });
+      }
+    }
+    function drawBubbles() {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      bubbles.forEach(bubble => {
+        ctx.beginPath();
+        ctx.arc(bubble.x, bubble.y, bubble.radius, 0, Math.PI * 2);
+        ctx.fill();
+        bubble.y -= bubble.speed;
+        if (bubble.y + bubble.radius < 0) {
+          bubble.y = canvas.height + bubble.radius;
+          bubble.x = Math.random() * canvas.width;
+        }
+      });
+    }
+    
+    // パワーアップの描画
+    function drawPowerUps() {
+      powerUps.forEach(powerUp => {
+        ctx.fillStyle = '#ffff00';
+        ctx.beginPath();
+        ctx.arc(powerUp.x + powerUp.width/2, powerUp.y + powerUp.height/2, powerUp.width/2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ffcc00';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    }
+    
+    // 入力管理用フラグ
+    let upPressed = false;
+    let downPressed = false;
+    let leftPressed = false;
+    let rightPressed = false;
+    
+    // タッチイベント
+    upBtn.addEventListener('touchstart', e => { e.preventDefault(); upPressed = true; });
+    upBtn.addEventListener('touchend', e => { e.preventDefault(); upPressed = false; });
+    downBtn.addEventListener('touchstart', e => { e.preventDefault(); downPressed = true; });
+    downBtn.addEventListener('touchend', e => { e.preventDefault(); downPressed = false; });
+    leftBtn.addEventListener('touchstart', e => { e.preventDefault(); leftPressed = true; });
+    leftBtn.addEventListener('touchend', e => { e.preventDefault(); leftPressed = false; });
+    rightBtn.addEventListener('touchstart', e => { e.preventDefault(); rightPressed = true; });
+    rightBtn.addEventListener('touchend', e => { e.preventDefault(); rightPressed = false; });
+    fireBtn.addEventListener('touchstart', e => { e.preventDefault(); if (gameRunning) createMissile(); });
+    
+    // マウス／ポインターイベント（PC向け）
+    upBtn.addEventListener('mousedown', e => { e.preventDefault(); upPressed = true; });
+    upBtn.addEventListener('mouseup', e => { e.preventDefault(); upPressed = false; });
+    upBtn.addEventListener('mouseleave', e => { e.preventDefault(); upPressed = false; });
+    downBtn.addEventListener('mousedown', e => { e.preventDefault(); downPressed = true; });
+    downBtn.addEventListener('mouseup', e => { e.preventDefault(); downPressed = false; });
+    downBtn.addEventListener('mouseleave', e => { e.preventDefault(); downPressed = false; });
+    leftBtn.addEventListener('mousedown', e => { e.preventDefault(); leftPressed = true; });
+    leftBtn.addEventListener('mouseup', e => { e.preventDefault(); leftPressed = false; });
+    leftBtn.addEventListener('mouseleave', e => { e.preventDefault(); leftPressed = false; });
+    rightBtn.addEventListener('mousedown', e => { e.preventDefault(); rightPressed = true; });
+    rightBtn.addEventListener('mouseup', e => { e.preventDefault(); rightPressed = false; });
+    rightBtn.addEventListener('mouseleave', e => { e.preventDefault(); rightPressed = false; });
+    fireBtn.addEventListener('mousedown', e => { e.preventDefault(); if (gameRunning) createMissile(); });
+    
+    // キーボードイベント
+    window.addEventListener('keydown', e => {
+      if (e.key === 'ArrowUp') {
+        upPressed = true;
+      } else if (e.key === 'ArrowDown') {
+        downPressed = true;
+      } else if (e.key === 'ArrowLeft') {
+        leftPressed = true;
+      } else if (e.key === 'ArrowRight') {
+        rightPressed = true;
+      } else if (e.key === ' ' && gameRunning) {
+        createMissile();
+      }
+    });
+    window.addEventListener('keyup', e => {
+      if (e.key === 'ArrowUp') upPressed = false;
+      else if (e.key === 'ArrowDown') downPressed = false;
+      else if (e.key === 'ArrowLeft') leftPressed = false;
+      else if (e.key === 'ArrowRight') rightPressed = false;
+    });
+    
+    function update() {
+      if (!gameRunning) return;
+      
+      // 無敵状態の更新
+      if (submarine.invincibleUntil && performance.now() < submarine.invincibleUntil) {
+        submarine.invincible = true;
+      } else {
+        submarine.invincible = false;
+      }
+      
+      // キー入力による移動（上下左右）
+      if (upPressed) submarine.move('up');
+      if (downPressed) submarine.move('down');
+      if (leftPressed) submarine.move('left');
+      if (rightPressed) submarine.move('right');
+      
+      // サメの生成
+      if (Math.random() * 1000 < sharkSpawnRate) createShark();
+      // パワーアップの生成（低確率で出現）
+      if (Math.random() < 0.001) createPowerUp();
+      
+      // ミサイルの移動
+      for (let i = missiles.length - 1; i >= 0; i--) {
+        missiles[i].x += missiles[i].speed;
+        if (missiles[i].x > canvas.width) missiles.splice(i, 1);
+      }
+      
+      // サメの移動と衝突判定
+      for (let i = sharks.length - 1; i >= 0; i--) {
+        sharks[i].x -= sharks[i].speed;
+        if (sharks[i].x + sharks[i].width < 0) {
+          sharks.splice(i, 1);
+          continue;
+        }
+        // 潜水艦との衝突（無敵中はダメージ無し）
+        if (checkCollision(submarine, sharks[i])) {
+          if (!submarine.invincible) {
+            playerHP -= 10;
+            hpDisplay.textContent = `HP: ${playerHP}`;
+            if (playerHP <= 0) gameOver();
+          }
+          sharks.splice(i, 1);
+          continue;
+        }
+        // ミサイルとの衝突判定
+        for (let j = missiles.length - 1; j >= 0; j--) {
+          if (checkCollision(missiles[j], sharks[i])) {
+            sharks[i].hp--;
+            missiles.splice(j, 1);
+            if (sharks[i].hp <= 0) {
+              score += Math.floor(sharks[i].width);
+              scoreDisplay.textContent = `スコア: ${score}`;
+              sharks.splice(i, 1);
+            }
+            break;
+          }
+        }
+      }
+      
+      // パワーアップの移動と取得判定
+      for (let i = powerUps.length - 1; i >= 0; i--) {
+        powerUps[i].x -= powerUps[i].speed;
+        if (powerUps[i].x + powerUps[i].width < 0) {
+          powerUps.splice(i, 1);
+          continue;
+        }
+        if (checkCollision(submarine, powerUps[i])) {
+          submarine.invincibleUntil = performance.now() + 5000; // 5秒間無敵
+          powerUps.splice(i, 1);
+        }
+      }
+      
+      // 難易度の更新：スコアに応じてサメのスピードが上昇
+      sharkSpeed = 2 + Math.floor(score / 500);
+    }
+    
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBubbles();
+      submarine.draw();
+      missiles.forEach(missile => {
+        ctx.fillStyle = '#ff3300';
+        ctx.beginPath();
+        ctx.moveTo(missile.x, missile.y);
+        ctx.lineTo(missile.x + missile.width, missile.y + missile.height / 2);
+        ctx.lineTo(missile.x, missile.y + missile.height);
+        ctx.fill();
+        ctx.fillStyle = '#cc0000';
+        ctx.beginPath();
+        ctx.arc(missile.x + missile.width, missile.y + missile.height / 2, missile.height, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255, 165, 0, 0.7)';
+        ctx.beginPath();
+        ctx.moveTo(missile.x, missile.y);
+        ctx.lineTo(missile.x - 15, missile.y - 3);
+        ctx.lineTo(missile.x - 5, missile.y + missile.height / 2);
+        ctx.lineTo(missile.x - 15, missile.y + missile.height + 3);
+        ctx.lineTo(missile.x, missile.y + missile.height);
+        ctx.fill();
+      });
+      sharks.forEach(shark => {
+        const centerX = shark.x + shark.width / 2;
+        const centerY = shark.y + shark.height / 2;
+        const sharkGradient = ctx.createLinearGradient(
+          shark.x, centerY - shark.height / 2,
+          shark.x, centerY + shark.height / 2
+        );
+        sharkGradient.addColorStop(0, '#a0a0a0');
+        sharkGradient.addColorStop(0.5, '#505050');
+        sharkGradient.addColorStop(1, '#303030');
+        ctx.fillStyle = sharkGradient;
+        ctx.beginPath();
+        ctx.moveTo(shark.x, centerY);
+        ctx.quadraticCurveTo(centerX, centerY - shark.height, shark.x + shark.width, centerY);
+        ctx.quadraticCurveTo(centerX, centerY + shark.height, shark.x, centerY);
+        ctx.fill();
+        // 各パーツの描画（背びれ・尾びれ・横びれなど）
+        ctx.fillStyle = '#303030';
+        ctx.beginPath();
+        ctx.moveTo(centerX - shark.width / 6, centerY - shark.height / 3);
+        ctx.lineTo(centerX, centerY - shark.height * 1.2);
+        ctx.lineTo(centerX + shark.width / 6, centerY - shark.height / 3);
+        ctx.fill();
+        ctx.fillStyle = '#404040';
+        ctx.beginPath();
+        ctx.moveTo(shark.x + shark.width, centerY - shark.height / 4);
+        ctx.lineTo(shark.x + shark.width + shark.width / 3, centerY - shark.height / 2);
+        ctx.lineTo(shark.x + shark.width + shark.width / 3, centerY + shark.height / 2);
+        ctx.lineTo(shark.x + shark.width, centerY + shark.height / 4);
+        ctx.fill();
+        ctx.fillStyle = '#505050';
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY + shark.height / 3);
+        ctx.lineTo(centerX - shark.width / 8, centerY + shark.height);
+        ctx.lineTo(centerX + shark.width / 8, centerY + shark.height / 3);
+        ctx.fill();
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(shark.x + shark.width / 6, centerY - shark.height / 6, shark.height / 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'black';
+        ctx.beginPath();
+        ctx.arc(shark.x + shark.width / 6, centerY - shark.height / 6, shark.height / 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(shark.x + shark.width / 7, centerY - shark.height / 5, shark.height / 25, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#800000';
+        ctx.beginPath();
+        ctx.moveTo(shark.x, centerY);
+        ctx.lineTo(shark.x - shark.width / 6, centerY - shark.height / 6);
+        ctx.lineTo(shark.x, centerY - shark.height / 12);
+        ctx.lineTo(shark.x - shark.width / 6, centerY);
+        ctx.lineTo(shark.x, centerY + shark.height / 12);
+        ctx.lineTo(shark.x - shark.width / 6, centerY + shark.height / 6);
+        ctx.lineTo(shark.x, centerY);
+        ctx.fill();
+        const teethSize = shark.height / 15;
+        for (let i = 0; i < 3; i++) {
+          ctx.beginPath();
+          ctx.moveTo(shark.x - teethSize * i, centerY - teethSize * (i+1));
+          ctx.lineTo(shark.x - teethSize * (i+1), centerY - teethSize * (i+2));
+          ctx.lineTo(shark.x - teethSize * (i+2), centerY - teethSize * (i+1));
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(shark.x - teethSize * i, centerY + teethSize * (i+1));
+          ctx.lineTo(shark.x - teethSize * (i+1), centerY + teethSize * (i+2));
+          ctx.lineTo(shark.x - teethSize * (i+2), centerY + teethSize * (i+1));
+          ctx.fill();
+        }
+        ctx.strokeStyle = '#303030';
+        ctx.lineWidth = 2;
+        for (let i = 1; i <= 3; i++) {
+          ctx.beginPath();
+          ctx.moveTo(shark.x + shark.width / 4 + i * shark.width / 12, centerY - shark.height / 3);
+          ctx.lineTo(shark.x + shark.width / 4 + i * shark.width / 12, centerY + shark.height / 3);
+          ctx.stroke();
+        }
+      });
+      drawPowerUps();
+    }
+    
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    function startGame() {
+      gameRunning = true;
+      score = 0;
+      playerHP = 100;
+      missiles = [];
+      sharks = [];
+      powerUps = [];
+      submarine.x = 50;
+      submarine.y = canvas.height / 2;
+      submarine.invincible = false;
+      submarine.invincibleUntil = 0;
+      scoreDisplay.textContent = `スコア: ${score}`;
+      hpDisplay.textContent = `HP: ${playerHP}`;
+      startScreen.style.display = 'none';
+      gameOverScreen.style.display = 'none';
+    }
+    
+    function gameOver() {
+      gameRunning = false;
+      finalScoreDisplay.textContent = `スコア: ${score}`;
+      gameOverScreen.style.display = 'flex';
+    }
+    
+    startBtn.addEventListener('click', startGame);
+    restartBtn.addEventListener('click', startGame);
+    
+    window.addEventListener('load', () => {
+      resizeCanvas();
+      createBubbles();
+      gameLoop();
+    });
+    window.addEventListener('resize', resizeCanvas);
+  </script>
+</body>
+</html>
